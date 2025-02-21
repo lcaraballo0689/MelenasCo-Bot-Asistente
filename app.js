@@ -1,66 +1,66 @@
-const { createBot, createProvider, createFlow, addKeyword } = require('@bot-whatsapp/bot')
-
+const dotenv = require("dotenv");
+const axios = require("axios");
+const { createBot, createProvider, createFlow, addKeyword, EVENTS } = require('@bot-whatsapp/bot')
 const QRPortalWeb = require('@bot-whatsapp/portal')
 const BaileysProvider = require('@bot-whatsapp/provider/baileys')
 const MockAdapter = require('@bot-whatsapp/database/mock')
+const ServerHttp = require("./src/http");
+const fs = require('fs');
+const path = require('path');
 
-const flowSecundario = addKeyword(['2', 'siguiente']).addAnswer(['📄 Aquí tenemos el flujo secundario'])
+// Carga las variables de entorno
+dotenv.config({ path: "./.env" });
 
-const flowDocs = addKeyword(['doc', 'documentacion', 'documentación']).addAnswer(
-    [
-        '📄 Aquí encontras las documentación recuerda que puedes mejorarla',
-        'https://bot-whatsapp.netlify.app/',
-        '\n*2* Para siguiente paso.',
-    ],
-    null,
-    null,
-    [flowSecundario]
-)
+const sendToGeminiAi = async (data) => {
+    try {
+        const response = await axios.post("http://192.168.0.33:3005/geminiAi", data);
+        
+        if (response.data.response) {
+            console.log("Respuesta de Gemini AI:", response.data.response);
+            return response.data.response;
+        } else if (response.data.caption) {
+            console.log("Respuesta de Gemini AI (Imagen):", response.data.caption);
+            return response.data.caption;
+        }
 
-const flowTuto = addKeyword(['tutorial', 'tuto']).addAnswer(
-    [
-        '🙌 Aquí encontras un ejemplo rapido',
-        'https://bot-whatsapp.netlify.app/docs/example/',
-        '\n*2* Para siguiente paso.',
-    ],
-    null,
-    null,
-    [flowSecundario]
-)
+        return "No se recibió una respuesta válida de Gemini AI.";
+    } catch (error) {
+        console.error("Error al enviar datos a Gemini AI:", error.message);
+        return "Hubo un error al procesar tu solicitud.";
+    }
+};
 
-const flowGracias = addKeyword(['gracias', 'grac']).addAnswer(
-    [
-        '🚀 Puedes aportar tu granito de arena a este proyecto',
-        '[*opencollective*] https://opencollective.com/bot-whatsapp',
-        '[*buymeacoffee*] https://www.buymeacoffee.com/leifermendez',
-        '[*patreon*] https://www.patreon.com/leifermendez',
-        '\n*2* Para siguiente paso.',
-    ],
-    null,
-    null,
-    [flowSecundario]
-)
+const flowPrincipal = addKeyword(EVENTS.WELCOME)
+    .addAction({ delay: 2000 }, async (ctx, { flowDynamic, provider }) => {
+        const mensaje = ctx.body;
+        const clienteId = ctx.from;
 
-const flowDiscord = addKeyword(['discord']).addAnswer(
-    ['🤪 Únete al discord', 'https://link.codigoencasa.com/DISCORD', '\n*2* Para siguiente paso.'],
-    null,
-    null,
-    [flowSecundario]
-)
+        // Obtener la instancia de sock
+        const sock = await provider.getInstance();
 
-const flowPrincipal = addKeyword(['hola', 'ole', 'alo'])
-    .addAnswer('🙌 Hola bienvenido a este *Chatbot*')
-    .addAnswer(
-        [
-            'te comparto los siguientes links de interes sobre el proyecto',
-            '👉 *doc* para ver la documentación',
-            '👉 *gracias*  para ver la lista de videos',
-            '👉 *discord* unirte al discord',
-        ],
-        null,
-        null,
-        [flowDocs, flowGracias, flowTuto, flowDiscord]
-    )
+        // Escuchar los mensajes entrantes
+        sock.ev.on('messages.upsert', async ({ messages }) => {
+            const message = messages[0];
+            if (!message.message) return;
+
+            // // Si el mensaje es de tipo imagen, lo procesamos
+            // if (message.message.imageMessage) {
+            //     const visionResponse = await handleImageMessage(message, sock, clienteId);
+            //     return await flowDynamic(visionResponse);
+            // }
+        });
+
+        // Enviar datos a Gemini AI y obtener la respuesta
+        const responseMessage = await sendToGeminiAi({ mensaje, clienteId });
+
+        // Validar si la respuesta contiene el código 'e101' y adjuntar un PDF si es necesario
+        // if (responseMessage.toLowerCase().includes("e101")) {
+        //     await flowDynamic([{ body: "Enlace:", media: "http://192.168.0.33:3001/archivo/test.pdf" }]);
+        // }
+
+        // Enviar el mensaje de respuesta
+        return await flowDynamic(responseMessage);
+    });
 
 const main = async () => {
     const adapterDB = new MockAdapter()
